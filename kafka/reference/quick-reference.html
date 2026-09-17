@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka 速查卡 · 本地环境与 CLI</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="../assets/components.css">
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">参考文档 · 速查卡</p>
+<h1>本地环境与 CLI 速查</h1>
+<p class="subtitle">单节点 Docker 环境 + 最常用的命令行工具。排障时第一个翻的地方。</p>
+
+<div class="meta">
+  <span>打印友好</span>
+  <span>适用 Kafka 3.9 / KRaft 模式</span>
+</div>
+
+<div class="callout key">
+  <span class="callout-label">环境约定</span>
+  <p>所有 <code>kafka-*.sh</code> 命令都在容器内执行，路径固定为 <code>/opt/kafka/bin/</code>。用 <code>docker exec</code> 而不是从宿主机连 —— 这样可以完全绕开 <code>advertised.listeners</code> 的配置坑。</p>
+</div>
+
+<h2>环境生命周期</h2>
+
+<div class="cmd">
+  <p class="cmd-title">启动单节点 broker</p>
+  <p class="cmd-note">KRaft 模式，无需 ZooKeeper。启动约需 15 秒。</p>
+<pre><span class="k">docker</span> run -d --name kafka -p 9092:9092 apache/kafka:3.9.0</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">确认启动成功</p>
+<pre><span class="k">docker</span> logs kafka | tail -5</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">进入容器（反复执行 CLI 时更省事）</p>
+<pre><span class="k">docker</span> exec -it kafka bash</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">停止并删除容器</p>
+  <p class="cmd-note">数据一并丢失 —— 学习环境无所谓，生产环境千万别这么干。</p>
+<pre><span class="k">docker</span> rm -f kafka</pre>
+</div>
+
+<h2>Topic 管理</h2>
+
+<div class="cmd">
+  <p class="cmd-title">建 topic</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create --topic &lt;名称&gt; --partitions 3 --replication-factor 1</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">列出所有 topic</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 --list</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">查看 topic 详情（分区、副本分布）</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 --describe --topic &lt;名称&gt;</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">增加分区</p>
+  <p class="cmd-note">只能增不能减。注意：增加分区会打乱已有 key 的分区映射，破坏按 key 的顺序。</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --alter --topic &lt;名称&gt; --partitions 6</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">删除 topic</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 --delete --topic &lt;名称&gt;</pre>
+</div>
+
+<h2>生产与消费</h2>
+
+<div class="cmd">
+  <p class="cmd-title">写入消息（每行一条）</p>
+<pre><span class="k">printf</span> <span class="s">'a\nb\nc\n'</span> | <span class="k">docker</span> exec -i kafka \
+  /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic &lt;名称&gt;</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">带 key 写入</p>
+  <p class="cmd-note">key 决定分区，进而决定顺序边界。这是最常用的保序手段。</p>
+<pre><span class="k">printf</span> <span class="s">'k1:v1\nk2:v2\n'</span> | <span class="k">docker</span> exec -i kafka \
+  /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic &lt;名称&gt; \
+  --property parse.key=true --property key.separator=:</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">从头消费（并打印 offset 与分区）</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic &lt;名称&gt; \
+  --from-beginning \
+  --property print.offset=true --property print.partition=true</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">指定消费者组消费</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic &lt;名称&gt; \
+  --group &lt;组名&gt;</pre>
+</div>
+
+<h2>查看消费进度</h2>
+
+<div class="cmd">
+  <p class="cmd-title">查看消费者组的位点与积压</p>
+  <p class="cmd-note">排障第一命令。<code>LAG</code> 列就是积压量 —— 它等于「日志末端位点 − 已提交位点」。</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group &lt;组名&gt;</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">列出所有消费者组</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --list</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">重置位点（重放的手段）</p>
+  <p class="cmd-note">必须先停掉该组的所有消费者，否则报错。<code>--to-earliest</code> 表示回到最早，<code>--to-datetime</code> 可指定时间点。</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --group &lt;组名&gt; \
+  --topic &lt;名称&gt; --reset-offsets --to-earliest --execute</pre>
+</div>
+
+<h2>分区与磁盘</h2>
+
+<div class="cmd">
+  <p class="cmd-title">查看分区日志的实际大小与位点范围</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-log-dirs.sh \
+  --bootstrap-server localhost:9092 --topic-list &lt;名称&gt; --describe</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">查看分区的最早 / 最新位点</p>
+  <p class="cmd-note">两者的差就是当前日志里保留的消息总数。</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:9092 --topic &lt;名称&gt;</pre>
+</div>
+
+<div class="footer">
+  <p>Kafka 学习 · 参考文档 · 速查卡 · 相关：<a href="../lessons/0001-kafka-is-a-log.html">第 1 课</a> · <a href="glossary.html">术语表</a></p>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,354 @@
+/* ============================================================
+   components.css — 可复用内容组件（依赖 course.css 的变量）
+   ============================================================ */
+
+/* ---------- 提示框 ---------- */
+.callout {
+  border-left: 3px solid var(--rule);
+  background: var(--paper-alt);
+  padding: .9rem 1.1rem;
+  margin: 1.2rem 0;
+  border-radius: 0 3px 3px 0;
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout-label {
+  display: block;
+  font-family: var(--sans);
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: .4rem;
+}
+
+.callout.key    { border-left-color: var(--accent); background: var(--accent-soft); }
+.callout.key    .callout-label { color: var(--accent); }
+.callout.warn   { border-left-color: var(--bad); background: var(--bad-soft); }
+.callout.warn   .callout-label { color: var(--bad); }
+.callout.check  { border-left-color: var(--ok); background: var(--ok-soft); }
+.callout.check  .callout-label { color: var(--ok); }
+
+/* ---------- 目标框 ---------- */
+.objectives {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1rem 1.2rem;
+  margin: 0 0 2rem;
+  background: var(--paper);
+}
+.objectives h4 { margin-top: 0; }
+.objectives ul { margin-bottom: 0; }
+
+/* ---------- 术语卡 ---------- */
+.term {
+  border-top: 1px solid var(--rule);
+  padding: .8rem 0;
+}
+.term:first-of-type { border-top: 2px solid var(--ink); }
+.term-name {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: .95rem;
+}
+.term-name .en {
+  font-weight: 400;
+  color: var(--ink-faint);
+  font-size: .85em;
+  margin-left: .4rem;
+}
+.term-def { margin: .25rem 0 0; font-size: .95rem; }
+.term-avoid {
+  font-family: var(--sans);
+  font-size: .78rem;
+  color: var(--ink-faint);
+  margin-top: .25rem;
+}
+
+/* ---------- 检索练习 ---------- */
+.quiz {
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  padding: 1.1rem 1.2rem;
+  margin: 1.5rem 0;
+  background: var(--paper);
+}
+.quiz-q {
+  font-weight: 600;
+  margin: 0 0 .8rem;
+}
+.quiz-q .num {
+  font-family: var(--sans);
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .08em;
+  display: block;
+  margin-bottom: .25rem;
+}
+.quiz-opts { list-style: none; padding: 0; margin: 0 0 .8rem; }
+.quiz-opts li { margin-bottom: .4rem; }
+
+.quiz-btn {
+  font-family: var(--sans);
+  font-size: .88rem;
+  text-align: left;
+  width: 100%;
+  padding: .5rem .8rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.quiz-btn:hover:not(:disabled) { background: var(--paper-alt); border-color: var(--ink-faint); }
+.quiz-btn:disabled { cursor: default; }
+.quiz-btn.correct { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.quiz-btn.wrong   { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+
+.quiz-feedback {
+  font-size: .9rem;
+  margin-top: .7rem;
+  padding-top: .7rem;
+  border-top: 1px dashed var(--rule);
+  display: none;
+}
+.quiz-feedback.show { display: block; }
+.quiz-feedback .verdict { font-weight: 700; font-family: var(--sans); font-size: .85rem; }
+.quiz-feedback .verdict.correct { color: var(--ok); }
+.quiz-feedback .verdict.wrong { color: var(--bad); }
+
+/* ---------- 揭示式答案（先想再看） ---------- */
+.reveal {
+  border: 1px dashed var(--ink-faint);
+  border-radius: 3px;
+  padding: .7rem 1rem;
+  margin: 1rem 0;
+  background: var(--paper-alt);
+}
+.reveal summary {
+  font-family: var(--sans);
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--accent);
+  list-style: none;
+}
+.reveal summary::-webkit-details-marker { display: none; }
+.reveal summary::before { content: "▸ "; }
+.reveal[open] summary::before { content: "▾ "; }
+.reveal[open] summary { margin-bottom: .6rem; }
+.reveal > :last-child { margin-bottom: 0; }
+
+/* ---------- 步骤序列（实操） ---------- */
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 2.2rem;
+  margin-bottom: 1.1rem;
+}
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0; top: .1rem;
+  width: 1.5rem; height: 1.5rem;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: .78rem;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.steps > li > :last-child { margin-bottom: 0; }
+
+/* ---------- 预测框（先写下预测再执行） ---------- */
+.predict {
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent-soft);
+  padding: .9rem 1.1rem;
+  margin: 1rem 0;
+}
+.predict .callout-label { color: var(--accent); }
+.predict textarea {
+  width: 100%;
+  min-height: 4.2rem;
+  font-family: var(--serif);
+  font-size: .92rem;
+  line-height: 1.5;
+  padding: .5rem .6rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+.predict textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* ---------- 一手资料指引 ---------- */
+.primary-source {
+  border: 1px solid var(--ink);
+  border-left-width: 5px;
+  border-radius: 3px;
+  padding: .9rem 1.1rem;
+  margin: 2rem 0 0;
+  background: var(--paper);
+}
+.primary-source .callout-label { color: var(--ink); }
+.primary-source .src-title { font-weight: 600; font-size: 1rem; }
+
+/* ---------- 学习链接（课程间导航） ---------- */
+.lesson-nav {
+  font-family: var(--sans);
+  font-size: .82rem;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+.lesson-nav h4 { margin-top: 0; }
+.lesson-nav ul { list-style: none; padding: 0; }
+.lesson-nav li { margin-bottom: .3rem; }
+
+/* ---------- 日志查看器（log-viewer.js 配套） ---------- */
+.lv {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1rem;
+  margin: 1.3rem 0;
+  background: var(--paper);
+}
+.lv-track {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  min-height: 3.4rem;
+  padding: .5rem;
+  background: var(--paper-alt);
+  border-radius: 3px;
+  margin-bottom: .8rem;
+}
+.lv-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 4.4rem;
+  padding: .3rem .4rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family: var(--sans);
+  font-size: .72rem;
+  transition: background .15s, border-color .15s;
+}
+.lv-cell .lv-off {
+  font-family: var(--mono);
+  font-size: .68rem;
+  color: var(--ink-faint);
+}
+.lv-cell.read {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+}
+.lv-cell.read .lv-off { color: var(--ok); font-weight: 700; }
+.lv-empty {
+  font-family: var(--sans);
+  font-size: .8rem;
+  color: var(--ink-faint);
+  padding: .8rem .4rem;
+}
+.lv-marker {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.lv-bar { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .6rem; }
+.lv-btn {
+  font-family: var(--sans);
+  font-size: .82rem;
+  padding: .38rem .8rem;
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+}
+.lv-btn:hover { opacity: .85; }
+.lv-btn.ghost {
+  background: var(--paper);
+  color: var(--ink-soft);
+  border-color: var(--rule);
+}
+.lv-stats {
+  font-family: var(--sans);
+  font-size: .78rem;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.lv-stats b { font-family: var(--mono); color: var(--accent); }
+
+/* ---------- 术语表：掌握状态徽标 ---------- */
+.badge {
+  display: inline-block;
+  font-family: var(--sans);
+  font-size: .66rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: .1rem .42rem;
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-left: .45rem;
+}
+.badge.verified { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok); }
+.badge.pending  { background: var(--paper-alt); color: var(--ink-faint); border: 1px solid var(--rule); }
+
+/* ---------- 速查卡：命令块 ---------- */
+.cmd {
+  border-top: 1px solid var(--rule);
+  padding: .9rem 0;
+}
+.cmd:first-of-type { border-top: 2px solid var(--ink); }
+.cmd-title {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: .88rem;
+  margin: 0 0 .35rem;
+}
+.cmd-note {
+  font-size: .88rem;
+  color: var(--ink-soft);
+  margin: 0 0 .5rem;
+}
+.cmd pre { margin-bottom: 0; }
+
+/* ---------- 术语表目录 ---------- */
+.toc {
+  font-family: var(--sans);
+  font-size: .84rem;
+  background: var(--paper-alt);
+  border-radius: 3px;
+  padding: .8rem 1.1rem;
+  margin: 0 0 2rem;
+}
+.toc ul { list-style: none; padding: 0; margin: 0; }
+.toc li { margin-bottom: .2rem; }
+.toc .toc-h { font-weight: 700; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: .35rem; }
+
+/* ---------- 检索练习：得分板与解析 ---------- */
+.quiz-score {
+  font-family: var(--sans);
+  font-size: .84rem;
+  color: var(--ink-soft);
+  background: var(--paper-alt);
+  border-left: 3px solid var(--ink-faint);
+  padding: .6rem .9rem;
+  border-radius: 0 3px 3px 0;
+  margin: .8rem 0 1.5rem;
+}
+.quiz-feedback .why { margin: 0; }
+.quiz-feedback .verdict + .why { margin-top: .35rem; }

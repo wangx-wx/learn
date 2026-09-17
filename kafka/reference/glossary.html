@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka 术语表</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="../assets/components.css">
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">参考文档 · 术语表</p>
+<h1>Kafka 术语表</h1>
+<p class="subtitle">这个工作区的统一语言。所有课程都遵守这里的用词。</p>
+
+<div class="meta">
+  <span>持续更新</span>
+  <span>本工作区的权威术语定义</span>
+</div>
+
+<div class="callout">
+  <span class="callout-label">怎么用这份表</span>
+  <p>术语不是字典，是<strong>你已经掌握的东西的压缩记录</strong>。所以每个词都带一个状态：<span class="badge verified">已掌握</span> 表示你在练习或讨论中验证过；<span class="badge pending">待验证</span> 表示刚接触，还没证明会用。学完一课，回来把状态推进一格 —— 这个动作本身就是一次检索练习。</p>
+</div>
+
+<div class="toc">
+  <p class="toc-h">本页分组</p>
+  <ul>
+    <li><a href="#log">日志与存储模型</a></li>
+    <li><a href="#consume">消费与位点</a></li>
+    <li><a href="#delivery">投递语义</a></li>
+  </ul>
+</div>
+
+<h2 id="log">日志与存储模型</h2>
+
+<div class="term">
+  <p class="term-name">日志<span class="en">Log</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">一种只追加、不可修改、按位置编号的消息序列；读取不改变内容，只是移动一个游标。</p>
+  <p class="term-avoid">避免说：消息队列 —— 队列的读是破坏性的，语义不同。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">分区<span class="en">Partition</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">一个 topic 被切分出的、彼此独立的日志；是顺序保证的边界，也是并行消费的最小单位。</p>
+  <p class="term-avoid">避免说：分片（shard）—— 那通常指数据库语境，且隐含不同的再平衡语义。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">位点<span class="en">Offset</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">消息在所属分区内的永久位置编号；分区内单调递增，跨分区不可比较。</p>
+  <p class="term-avoid">避免说：消息 ID —— offset 标识的是位置，不是消息的身份，重放时会重复出现。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">保留策略<span class="en">Retention</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">决定消息何时被删除的规则，按时间或按分区总体积计算，与是否被消费无关。</p>
+  <p class="term-avoid">避免说：过期时间（TTL）—— 缓存语境的 TTL 由访问刷新，Kafka 的保留期不因消费而延长。</p>
+</div>
+
+<h2 id="consume">消费与位点</h2>
+
+<div class="term">
+  <p class="term-name">消费者组<span class="en">Consumer Group</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">一组协作消费同一个 topic 的消费者；每个分区在同一时刻只被组内一个成员消费。</p>
+  <p class="term-avoid">避免说：消费集群 —— 组是逻辑订阅关系，不等于一组机器。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">提交位点<span class="en">Commit</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">消费者把「我已处理到这里」这一事实持久化下来的动作；重启后从最近一次已提交的位点继续。</p>
+  <p class="term-avoid">避免说：确认（ack）—— ack 是队列语境里「可以删了」的语义，Kafka 的提交不删除任何东西。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">再平衡<span class="en">Rebalance</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">消费者组成员变化时，重新分配哪些分区归哪些成员消费的过程；期间该组的消费会短暂停顿。</p>
+  <p class="term-avoid">避免说：负载均衡 —— 它针对的是分区归属而非请求流量，且伴随停顿。</p>
+</div>
+
+<h2 id="delivery">投递语义</h2>
+
+<div class="term">
+  <p class="term-name">至少一次<span class="en">At-least-once</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">消息不会丢失，但在崩溃、重试或再平衡后可能被处理多次的投递保证；Kafka 的默认语义。</p>
+  <p class="term-avoid">避免说：可靠投递 —— 太含糊，没说清「可靠」是不丢还是去重。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">幂等<span class="en">Idempotent</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">同一个操作执行多次与执行一次的效果相同；消费端实现它，才能把「至少一次」变成业务上的「恰好一次」。</p>
+  <p class="term-avoid">避免说：去重 —— 去重是实现幂等的一种手段，不是定义。</p>
+</div>
+
+<div class="footer">
+  <p>Kafka 学习 · 参考文档 · 术语表 · 相关：<a href="../lessons/0001-kafka-is-a-log.html">第 1 课</a> · <a href="quick-reference.html">速查卡</a></p>
+</div>
+
+</div>
+</body>
+</html>
