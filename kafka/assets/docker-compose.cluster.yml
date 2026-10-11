@@ -1,0 +1,63 @@
+# ============================================================
+# 3 broker KRaft 集群 —— 副本 / ISR / HW 实验环境
+# 用法：
+#   docker compose -f docker-compose.cluster.yml up -d
+#   docker compose -f docker-compose.cluster.yml down
+#
+# 端口约定（每个 broker 两个 listener）：
+#   19092 内部 listener，broker 之间通信、容器内 CLI 用
+#   29092 / 39092 / 49092  宿主机 listener，从 Mac 上的 Java 客户端连时用
+#
+# 从容器内执行 CLI 时用内部地址，例如：
+#   docker exec kafka-1 /opt/kafka/bin/kafka-topics.sh \
+#     --bootstrap-server kafka-1:19092 --list
+# ============================================================
+
+x-kafka-common: &kafka-common
+  KAFKA_PROCESS_ROLES: 'broker,controller'
+  KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093'
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+  KAFKA_LISTENERS: 'PLAINTEXT://:19092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092'
+  KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+  KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+  CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
+  KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+  # 内部 topic（__consumer_offsets 等）也做 3 副本，贴近真实环境
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+services:
+  kafka-1:
+    image: apache/kafka:4.3.1
+    hostname: kafka-1
+    container_name: kafka-1
+    ports:
+      - 29092:9092
+    environment:
+      <<: *kafka-common
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-1:19092,PLAINTEXT_HOST://localhost:29092'
+
+  kafka-2:
+    image: apache/kafka:4.3.1
+    hostname: kafka-2
+    container_name: kafka-2
+    ports:
+      - 39092:9092
+    environment:
+      <<: *kafka-common
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-2:19092,PLAINTEXT_HOST://localhost:39092'
+
+  kafka-3:
+    image: apache/kafka:4.3.1
+    hostname: kafka-3
+    container_name: kafka-3
+    ports:
+      - 49092:9092
+    environment:
+      <<: *kafka-common
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-3:19092,PLAINTEXT_HOST://localhost:49092'
