@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课 · 位点到底存在哪</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="../assets/components.css">
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">Kafka 学习 · 第 2 课</p>
+<h1>位点到底存在哪</h1>
+<p class="subtitle">你自己撞出的一个矛盾 —— 「位点在消费者手里」和「Kafka 自己建 topic 存 offset」怎么可能同时成立</p>
+
+<div class="meta">
+  <span>约 60 分钟</span>
+  <span>需要:第 1 课的容器还在</span>
+  <span>前置:第 1 课</span>
+</div>
+
+<div class="objectives">
+  <h4>本课结束后你能做到</h4>
+  <ul>
+    <li>说清「处理到哪」和「提交到哪」是两个不同的位置,以及它们的差值意味着什么</li>
+    <li>解释 <code>__consumer_offsets</code> 的存在为什么<strong>不</strong>推翻「位点在客户端」这个结论</li>
+    <li>用 <code>auto.offset.reset</code> 的默认值解释「我的消息怎么一条都没读到」</li>
+    <li>亲手制造一次重复消费,并用 <code>--reset-offsets</code> 完成一次重放</li>
+  </ul>
+</div>
+
+<h2>一、先说你在上一课撞出来的那个矛盾</h2>
+
+<p>第 1 课说:<strong>位点在消费者手里,boker 不知道你读到哪了。</strong></p>
+
+<p>而你在回答里提到:<strong>「新版本的 Kafka 会自己建一个 topic 去保存消息的 offset」。</strong></p>
+
+<p>这两句话看起来是打架的。但它们都对 —— 而且它们之所以能同时成立,正是理解 Kafka 消费语义的关键。这个内部 topic 叫 <code>__consumer_offsets</code>,默认 <strong>50 个分区、3 副本</strong> <a href="https://kafka.apache.org/43/generated/kafka_config.html">(官方配置文档)</a>。</p>
+
+<p>解开矛盾的那句话是:</p>
+
+<div class="callout key">
+  <span class="callout-label">核心洞察</span>
+  <p>broker 存的是<strong>你主动提交上来的</strong>位点,不是你实际处理到的位置。它是个保管箱,不是监工 —— 它完全不知道你处理到哪了,只知道你上次汇报到哪了。</p>
+</div>
+
+<p>这个区别听起来很小,但它就是<strong>重复消费</strong>的全部根源。下面把它拆开看。</p>
+
+<h2>二、两个位置:处理到哪 vs 提交到哪</h2>
+
+<p>你的进程里其实有两个独立的「进度」:</p>
+
+<table>
+  <thead>
+    <tr><th></th><th>处理到哪(processed)</th><th>提交到哪(committed)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>存在哪</strong></td>
+      <td>你的进程内存里</td>
+      <td>broker 的 <code>__consumer_offsets</code></td>
+    </tr>
+    <tr>
+      <td><strong>怎么变</strong></td>
+      <td>每处理一条就前进</td>
+      <td>你调用提交时才前进</td>
+    </tr>
+    <tr>
+      <td><strong>进程崩溃后</strong></td>
+      <td>丢了</td>
+      <td>还在</td>
+    </tr>
+    <tr>
+      <td><strong>重启时用它吗</strong></td>
+      <td>不用 —— 已经没了</td>
+      <td>用它,从这里继续</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>于是崩溃恢复的规则只有一句:<strong>从「提交到哪」继续,而不是从「处理到哪」继续。</strong>两者之间的那段消息,会被<strong>再处理一遍</strong>。</p>
+
+<p>动手感受一下。下面模拟一个消费者:生产几条消息,处理几条,提交一次,然后崩溃重启 —— 注意崩溃后哪些格子会变回未处理。</p>
+
+<div class="cs" data-commit-sim>
+  <div class="cs-track"></div>
+  <div class="cs-bar">
+    <button class="cs-btn" data-act="produce">生产一条</button>
+    <button class="cs-btn" data-act="process">处理一条</button>
+    <button class="cs-btn" data-act="commit">提交位点</button>
+    <button class="cs-btn" data-act="crash">崩溃并重启</button>
+    <button class="cs-btn ghost" data-act="reset">重置</button>
+  </div>
+  <p class="cs-stats">
+    日志末端 <b class="cs-total">0</b> ·
+    已处理到 <b class="cs-processed">0</b> ·
+    已提交到 <b class="cs-committed">0</b> ·
+    崩溃会重读 <b class="cs-risk">0</b> 条
+  </p>
+</div>
+
+<p>请务必亲手做一次这个序列:<strong>生产 4 条 → 处理 3 条 → 提交 → 再处理 1 条 → 崩溃并重启</strong>。最后一步之后,「已处理到」会从 4 退回到 3 —— 第 4 条(offset 3)回到了未处理状态。那条消息并没有消失,它只是<strong>又会被读一遍</strong>。</p>
+
+<div class="callout warn">
+  <span class="callout-label">这就是 at-least-once 的字面含义</span>
+  <p>「至少一次」不是一个保证级别的名字,而是这个机制的<strong>直接后果</strong>:消息不会丢(提交了才前进),但可能重复(处理了没提交就崩)。Kafka 默认不提供「恰好一次」—— 想要它,得靠消费端幂等,或者生产者事务,那是后面的课。</p>
+</div>
+
+<h2>三、默认配置里的一个陷阱</h2>
+
+<p>现在回到那个保管箱。有个场景你必须知道:</p>
+
+<p><strong>一个全新的消费者组,第一次来消费一个已经有数据的 topic —— 它从哪里开始读?</strong></p>
+
+<p>直觉会说「从头读吧」。但 Kafka 的默认答案不是这个。看官方文档里 <code>auto.offset.reset</code> 的默认值:</p>
+
+<table>
+  <thead>
+    <tr><th>配置</th><th>默认值</th><th>含义</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>auto.offset.reset</code></td>
+      <td><strong>latest</strong></td>
+      <td>没有已提交位点时,从<strong>日志末端</strong>开始</td>
+    </tr>
+    <tr>
+      <td><code>enable.auto.commit</code></td>
+      <td><strong>true</strong></td>
+      <td>自动提交,默认开着</td>
+    </tr>
+    <tr>
+      <td><code>auto.commit.interval.ms</code></td>
+      <td><strong>5000</strong></td>
+      <td>每 5 秒提交一次 —— 不是处理完就提交</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="meta" style="border:0;padding:0;margin:-.5rem 0 1rem">来源:<a href="https://kafka.apache.org/43/generated/consumer_config.html">Kafka 4.3 消费者配置(官方)</a></p>
+
+<p>所以那个陷阱是:<strong>你新起一个消费者组去读一个已有 100 万条消息的 topic,默认一条都读不到</strong> —— 因为它从末端开始等新消息。这正是很多「我的消费者怎么没反应」的真实原因。想要从头读,得显式设置 <code>auto.offset.reset=earliest</code>,或者在命令行加 <code>--from-beginning</code>。</p>
+
+<div class="callout">
+  <span class="callout-label">顺带修正一个说法</span>
+  <p>第 1 课和第 1 课的速查卡里写的是 <code>apache/kafka:3.9.0</code>,你装的是 <strong>4.3.1</strong>。4.3.1 是当前最新版,CLI 工具名和路径(<code>/opt/kafka/bin/</code>)与 3.x 一致,本课命令照跑。唯一的重大差异是 <strong>4.0 起彻底移除了 ZooKeeper</strong> —— 只跑 KRaft。速查卡我已同步更新。</p>
+</div>
+
+<h2>四、检索练习</h2>
+
+<p>不要往回翻。先凭记忆答,答完再看解析。</p>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 1 / 4</span>消费者进程崩溃后重启,它从哪里继续消费?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">从上次已提交的位点继续</button></li>
+    <li><button class="quiz-btn" data-correct="false">从内存里记录的位点继续</button></li>
+    <li><button class="quiz-btn" data-correct="false">从日志最开始的位置继续</button></li>
+    <li><button class="quiz-btn" data-correct="false">从日志最末端的位置继续</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">内存里的「处理到哪」随进程一起消失,broker 里只留着你提交过的位置。两者之间那段消息会被重读 —— 这就是重复消费的来源。</p>
+  </div>
+</div>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 2 / 4</span><code>auto.offset.reset</code> 默认是 <code>latest</code>,意味着什么?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="false">新消费者组默认从开头开始读</button></li>
+    <li><button class="quiz-btn" data-correct="true">新消费者组默认从末端开始读</button></li>
+    <li><button class="quiz-btn" data-correct="false">新消费者组默认从中间开始读</button></li>
+    <li><button class="quiz-btn" data-correct="false">新消费者组默认拒绝启动运行</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">注意这个配置只在「<strong>没有已提交位点</strong>」时才起作用 —— 它管的是「从哪开始」,不管「之后怎么走」。已有位点的组不受它影响。</p>
+  </div>
+</div>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 3 / 4</span>broker 上的 <code>__consumer_offsets</code> 里存的是什么?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">消费者组主动提交上来的位点</button></li>
+    <li><button class="quiz-btn" data-correct="false">消费者进程实际处理到的位置</button></li>
+    <li><button class="quiz-btn" data-correct="false">每条消息曾被哪个消费者读过</button></li>
+    <li><button class="quiz-btn" data-correct="false">分区副本之间同步进度的状态</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">这是本课要解开的那对矛盾。broker 是被动接收提交的保管箱 —— 它存的是「你汇报到哪」,不是你「实际处理到哪」。所以「位点在客户端」这个结论依然成立。</p>
+  </div>
+</div>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 4 / 4</span>下列哪种情况会导致同一条消息被处理两次?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">处理完但尚未提交时进程崩溃</button></li>
+    <li><button class="quiz-btn" data-correct="false">位点提交过于频繁而导致过载</button></li>
+    <li><button class="quiz-btn" data-correct="false">消费者组再平衡导致分区换手</button></li>
+    <li><button class="quiz-btn" data-correct="false">生产者重试导致消息写入两次</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">崩溃点落在「已处理、未提交」这个窗口里,重启后就会重读。注意第三个选项:<strong>再平衡本身不会</strong>造成重复 —— 只有当它和「已处理未提交」叠加时才会。</p>
+  </div>
+</div>
+
+<p class="quiz-score no-print" data-scoreboard></p>
+
+<h2>五、动手:亲手制造一次重复消费,再重放一次</h2>
+
+<p>这一段把上面所有概念落到你的容器里。全部命令都在容器内执行,和上一课一样。</p>
+
+<div class="callout">
+  <span class="callout-label">先对齐一下这些命令在干什么</span>
+  <p>你上一课说「对部分命令不太清楚」—— 这次每条命令后面我都写了它在做什么。看命令时先读那一句,再读命令本身,你会发现它们只是<strong>把参数翻译成动作</strong>而已。</p>
+</div>
+
+<ol class="steps">
+  <li>
+    <p><strong>确认容器还在</strong></p>
+<pre><span class="k">docker</span> ps --filter name=kafka --format '{{.Names}} {{.Status}}'</pre>
+    <p>应该看到 <code>kafka Up ...</code>。如果容器没了,用第 1 课那条 <code>docker run</code> 重新起一个。</p>
+  </li>
+
+  <li>
+    <p><strong>建一个 3 分区的 topic</strong></p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create --topic lesson2 --partitions 3 --replication-factor 1</pre>
+    <p>这次用 <strong>3 个分区</strong>,而不是上一课的 1 个 —— 目的是让你亲眼看到「offset 是分区内的编号」这件事。</p>
+  </li>
+
+  <li>
+    <p><strong>写入带 key 的消息</strong></p>
+<pre><span class="k">printf</span> <span class="s">'u1:a\nu2:b\nu1:c\nu3:d\nu2:e\nu1:f\n'</span> | <span class="k">docker</span> exec -i kafka \
+  /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic lesson2 \
+  --property parse.key=true --property key.separator=:</pre>
+    <p><code>parse.key=true</code> 让 producer 把冒号前的部分当 key。key 决定这条消息进哪个分区 —— 所以 <code>u1</code> 的三条会落到同一个分区。</p>
+  </li>
+
+  <li>
+    <p><strong>看 offset 是怎么编号的(关键一步)</strong></p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic lesson2 \
+  --from-beginning --property print.key=true \
+  --property print.partition=true --property print.offset=true</pre>
+    <p>盯住输出里的 <code>Partition</code> 和 <code>Offset</code> 两列。<strong>你会看到 Partition:0 Offset:0 和 Partition:1 Offset:0 同时存在</strong> —— 两个分区各自从 0 开始编号。这就是「offset 的命名空间是分区,不是 topic」的字面证据。上一课你把它说成了 topic,这里亲眼看一下差在哪。</p>
+  </li>
+
+  <li>
+    <p><strong>用一个消费者组消费,然后观察位点</strong></p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic lesson2 \
+  --group demo --from-beginning --max-messages 6</pre>
+    <p>这次加了 <code>--group demo</code>,所以它会<strong>把位点提交到 broker</strong>。消费完 6 条后进程退出。现在查这个组的位点:</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group demo</pre>
+    <p>看这张表的三列:<code>CURRENT-OFFSET</code> 是已提交位点,<code>LOG-END-OFFSET</code> 是日志末端,<code>LAG</code> 是两者之差 —— <strong>积压量就是 LAG</strong>。这是你以后排障第一个要看的命令。</p>
+    <div class="callout warn">
+      <span class="callout-label">如果 LAG 不是 0,别慌</span>
+      <p>命令行消费者用的是<strong>自动提交</strong>(默认每 5 秒一次),而不是「处理完立刻提交」。如果你在 5 秒内就消费完 6 条并退出,最后那几条的位点可能还没来得及提交,于是 LAG 会剩下几。稍等几秒再查一次,或者干脆在消费时不加 <code>--max-messages</code>、让它多跑一会儿。这不影响下一步 —— 只要位点<strong>有</strong>提交,第 6 步的现象就会出现。</p>
+    </div>
+  </li>
+
+  <li>
+    <p><strong>再消费一次 —— 这次应该什么都读不到</strong></p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic lesson2 \
+  --group demo --from-beginning --max-messages 6</pre>
+    <p>你会看到它<strong>挂住不动</strong>。别急着 Ctrl-C,先想一秒:为什么这次 <code>--from-beginning</code> 不管用了?</p>
+    <div class="callout check">
+      <span class="callout-label">因为位点已经提交了</span>
+      <p><code>--from-beginning</code> 只在「没有已提交位点」时才有意义。这个组上次退出时已经提交到末端,所以它老老实实从末端开始等新消息。<strong>这恰好从反面证明了:提交的位点是真的被 broker 记住了。</strong></p>
+    </div>
+  </li>
+
+  <li>
+    <p><strong>重置位点,完成一次重放</strong></p>
+    <p>先 Ctrl-C 停掉上一步挂着的消费者(重置位点要求该组没有活跃消费者,否则报错)。然后:</p>
+<pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --group demo \
+  --topic lesson2 --reset-offsets --to-earliest --execute</pre>
+    <p><code>--reset-offsets</code> 就是「把保管箱里的位点改掉」,<code>--to-earliest</code> 表示改到最早,<code>--execute</code> 表示真的执行(不加它只预览)。这正是你在第 1 课里猜到的那个「可以重拨 offset 的命令」—— 你的推测是对的。</p>
+    <p>现在把第 6 步的命令再跑一次,6 条消息又全部出现了。<strong>这就是重放。</strong>数据没动过,变的只是那个提交位点。</p>
+  </li>
+</ol>
+
+<div class="predict">
+  <span class="callout-label">先想再看</span>
+  <p>把第 5 步的 <code>--from-beginning</code> 去掉(但保留 <code>--group</code>),换成<strong>一个新的组名</strong> <code>--group demo2</code> 去消费 <code>lesson2</code>。它会读到什么?先写下预测,再执行验证。</p>
+  <textarea placeholder="我的预测是……"></textarea>
+</div>
+
+<h2>六、把这一课压缩成一句话</h2>
+
+<div class="callout key">
+  <span class="callout-label">带走这一句</span>
+  <p>broker 里的位点是<strong>你提交的</strong>,不是你<strong>处理到的</strong> —— 两者的差就是崩溃后会重读的那一段。而「从哪开始」由 <code>auto.offset.reset</code> 决定,它的默认值是 <code>latest</code>,不是 <code>earliest</code>。</p>
+</div>
+
+<p>下次遇到「消费积压」,去查 <code>--describe --group</code> 的 LAG;遇到「消息重复」,去想崩溃点是否落在「已处理未提交」那个窗口里。这两类问题的排查方向,现在你都能自己推出来了。</p>
+
+<div class="primary-source">
+  <span class="callout-label">一手资料 · 强烈建议读</span>
+  <p class="src-title">Apache Kafka 官方文档 · Design 章节</p>
+  <p>本课讲的消费语义、位点提交,官方文档里有精确表述。读 Design 一节里关于 Consumer 的部分,重点看「Kafka 如何保证投递语义」和「消费者如何提交位点」两段。这是所有二手资料的最终依据。</p>
+  <p><a href="https://kafka.apache.org/43/design/design">kafka.apache.org/43/design/design</a>(英文,约 20 分钟)</p>
+  <p>配置项的确切默认值,随时可查:<a href="https://kafka.apache.org/43/generated/consumer_config.html">消费者配置(官方)</a>。遇到任何冲突,以官方文档为准。</p>
+</div>
+
+<div class="lesson-nav">
+  <h4>相关</h4>
+  <ul>
+    <li><a href="0001-kafka-is-a-log.html">第 1 课</a> —— 日志模型:消费是移动只读游标</li>
+    <li><a href="../reference/glossary.html">术语表</a> —— 本课引入:提交位点、消费者组、at-least-once</li>
+    <li><a href="../reference/quick-reference.html">速查卡</a> —— 已更新为 Kafka 4.3.1,新增位点重置与积压查询</li>
+  </ul>
+</div>
+
+<div class="callout warn no-print">
+  <span class="callout-label">我是你的老师,随时提问</span>
+  <p>命令报错、概念不清楚、或者你觉得我哪里讲得不对 —— 直接问。做练习时把你的答案(包括答错的)告诉我,我会据此决定第 3 课从哪切入。</p>
+</div>
+
+<div class="footer">
+  <p>Kafka 学习 · 第 2 课 · <a href="0002-where-does-the-offset-live.html">0002-where-does-the-offset-live</a></p>
+</div>
+
+</div>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/commit-sim.js"></script>
+</body>
+</html>
