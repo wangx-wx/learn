@@ -29,6 +29,7 @@
   <ul>
     <li><a href="#log">日志与存储模型</a></li>
     <li><a href="#consume">消费与位点</a></li>
+    <li><a href="#replica">副本与可靠性</a></li>
     <li><a href="#delivery">投递语义</a></li>
   </ul>
 </div>
@@ -36,20 +37,21 @@
 <h2 id="log">日志与存储模型</h2>
 
 <div class="term">
-  <p class="term-name">日志<span class="en">Log</span><span class="badge pending">待验证</span></p>
+  <p class="term-name">日志<span class="en">Log</span><span class="badge verified">已掌握</span></p>
   <p class="term-def">一种只追加、不可修改、按位置编号的消息序列；读取不改变内容，只是移动一个游标。</p>
   <p class="term-avoid">避免说：消息队列 —— 队列的读是破坏性的，语义不同。</p>
 </div>
 
 <div class="term">
-  <p class="term-name">分区<span class="en">Partition</span><span class="badge pending">待验证</span></p>
+  <p class="term-name">分区<span class="en">Partition</span><span class="badge verified">已掌握</span></p>
   <p class="term-def">一个 topic 被切分出的、彼此独立的日志；是顺序保证的边界，也是并行消费的最小单位。</p>
   <p class="term-avoid">避免说：分片（shard）—— 那通常指数据库语境，且隐含不同的再平衡语义。</p>
 </div>
 
 <div class="term">
-  <p class="term-name">位点<span class="en">Offset</span><span class="badge pending">待验证</span></p>
+  <p class="term-name">位点<span class="en">Offset</span><span class="badge verified">已掌握</span></p>
   <p class="term-def">消息在所属分区内的永久位置编号；分区内单调递增，跨分区不可比较。</p>
+  <p class="term-avoid">⚠️ 常见错误：说成「topic 内的编号」。一个 topic 有 3 个分区时，offset=0 这条消息同时存在三条。命名空间是<strong>分区</strong>，不是 topic。</p>
   <p class="term-avoid">避免说：消息 ID —— offset 标识的是位置，不是消息的身份，重放时会重复出现。</p>
 </div>
 
@@ -57,6 +59,56 @@
   <p class="term-name">保留策略<span class="en">Retention</span><span class="badge pending">待验证</span></p>
   <p class="term-def">决定消息何时被删除的规则，按时间或按分区总体积计算，与是否被消费无关。</p>
   <p class="term-avoid">避免说：过期时间（TTL）—— 缓存语境的 TTL 由访问刷新，Kafka 的保留期不因消费而延长。</p>
+</div>
+
+<h2 id="replica">副本与可靠性</h2>
+
+<div class="term">
+  <p class="term-name">副本<span class="en">Replica</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">分区在多个 broker 上的冗余拷贝；其中一个是 leader（承接读写），其余是 follower（持续复制 leader 的日志）。</p>
+  <p class="term-avoid">避免说：备份 —— 备份是离线的静态拷贝，副本是在线同步的，且可自动接管。</p>
+  <p class="term-avoid">⚠️ 副本的「份数」要连同「<strong>分布在几台独立物理机</strong>」一起看 —— 3 份副本挤在一台机器上，对机器级故障只等效于 1 份。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">同步副本集合<span class="en">ISR</span><span class="badge verified">已掌握</span></p>
+  <p class="term-def">「跟得上 leader」的副本集合，<strong>包含 leader 自己</strong>。只有 ISR 内的副本才有资格在 leader 挂掉后接班。判定标准是时间（<code>replica.lag.time.max.ms</code>，默认 30 秒），不是存活状态。</p>
+  <p class="term-avoid">避免说：可用副本 —— 「进程活着」和「在 ISR 里」是两件事，落后超时的副本照样会被踢出。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">日志末端位点<span class="en">LEO</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">某个副本自己写到哪了。每个副本各有一个 LEO，彼此可能不同（因为同步有延迟）。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">高水位<span class="en">HW</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">ISR 中<strong>最小的 LEO</strong>。消费者只能读到 HW 之前的消息 —— 这是「已被足够多副本确认」的边界。</p>
+  <p class="term-avoid">避免说：最新位点 —— HW 通常落后于 leader 的 LEO，两者不是一回事。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">写入确认级别<span class="en">acks</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">生产者要求几个副本确认才算写成功：<code>0</code>（不等）、<code>1</code>（只等 leader）、<code>all</code>（等 ISR 全体）。4.x 默认 <code>all</code>。</p>
+  <p class="term-avoid">⚠️ 单独看 acks 会得出错误结论 —— 它必须与 <code>min.insync.replicas</code> 成对判断。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">最小同步副本数<span class="en">min.insync.replicas</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">ISR 少于这个数量时，<code>acks=all</code> 的写入会被<strong>直接拒绝</strong>。默认值只有 <code>1</code> —— 等于不设防。</p>
+  <p class="term-avoid">⚠️ 最常见的陷阱：<code>acks=all</code> + <code>min.insync.replicas=1</code>，在 ISR 只剩 leader 时退化为「只等自己」。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">持久性<span class="en">Durability</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">数据在故障后仍可恢复的能力。<strong>在 Kafka 里，它由副本份数保证，而不是由本机磁盘保证。</strong>消息写进 leader 就返回「成功」，但那份数据是否安全，取决于此刻有几个<strong>互相独立的副本</strong>收到了它。</p>
+  <p class="term-avoid">避免说：写成功 = 安全 —— 写成功只说明「进了当时存在的副本」，不等于「有冗余」。要问「几份、分布在几台机器上」。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">刷盘策略<span class="en">flush / fsync</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">Kafka 默认<strong>不每条消息都 fsync</strong>：消息写进操作系统的 page cache 即返回，落盘由 OS 择机完成。因此机器断电时，尚未落盘的最新消息可能丢失 —— 这正是「单机磁盘不可靠」的由来。相关参数：<code>log.flush.interval.messages</code>、<code>log.flush.interval.ms</code>。</p>
+  <p class="term-avoid">避免说：写到文件了就安全 —— 「写进 page cache」和「落到磁盘」是两件事。</p>
 </div>
 
 <h2 id="consume">消费与位点</h2>
@@ -68,9 +120,22 @@
 </div>
 
 <div class="term">
-  <p class="term-name">提交位点<span class="en">Commit</span><span class="badge pending">待验证</span></p>
+  <p class="term-name">提交位点<span class="en">Commit</span><span class="badge verified">已掌握</span></p>
   <p class="term-def">消费者把「我已处理到这里」这一事实持久化下来的动作；重启后从最近一次已提交的位点继续。</p>
+  <p class="term-avoid">⚠️ 提交的位置不是你<strong>实际处理到</strong>的位置 —— 两者之间的差，就是崩溃后会重读的那一段。</p>
   <p class="term-avoid">避免说：确认（ack）—— ack 是队列语境里「可以删了」的语义，Kafka 的提交不删除任何东西。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">内部位点 topic<span class="en">__consumer_offsets</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">broker 侧用来保存各消费者组已提交位点的内部 topic；默认 50 个分区、3 副本。它存的是消费者<strong>主动提交</strong>上来的位置，不是实际处理到的位置。</p>
+  <p class="term-avoid">避免说：Kafka 帮消费者记进度 —— broker 是被动的保管箱，不知道你处理到哪。它的存在不推翻「位点在客户端」。</p>
+</div>
+
+<div class="term">
+  <p class="term-name">自动重置位点<span class="en">auto.offset.reset</span><span class="badge pending">待验证</span></p>
+  <p class="term-def">消费者组<strong>没有已提交位点</strong>时的起始位置策略。默认值是 <code>latest</code>（从末端开始），不是 <code>earliest</code>。</p>
+  <p class="term-avoid">避免说：消费起点 —— 它只在「首次消费」这一刻起作用，之后位点由提交决定，与它无关。</p>
 </div>
 
 <div class="term">
@@ -94,7 +159,7 @@
 </div>
 
 <div class="footer">
-  <p>Kafka 学习 · 参考文档 · 术语表 · 相关：<a href="../lessons/0001-kafka-is-a-log.html">第 1 课</a> · <a href="quick-reference.html">速查卡</a></p>
+  <p>Kafka 学习 · 参考文档 · 术语表 · 相关：<a href="../lessons/0001-kafka-is-a-log.html">第 1 课</a> · <a href="../lessons/0002-where-does-the-offset-live.html">第 2 课</a> · <a href="../lessons/0003-replication-and-isr.html">第 3 课</a> · <a href="quick-reference.html">速查卡</a></p>
 </div>
 
 </div>

@@ -16,7 +16,7 @@
 
 <div class="meta">
   <span>打印友好</span>
-  <span>适用 Kafka 3.9 / KRaft 模式</span>
+  <span>适用 Kafka 4.3.1 / KRaft 模式</span>
 </div>
 
 <div class="callout key">
@@ -29,7 +29,7 @@
 <div class="cmd">
   <p class="cmd-title">启动单节点 broker</p>
   <p class="cmd-note">KRaft 模式，无需 ZooKeeper。启动约需 15 秒。</p>
-<pre><span class="k">docker</span> run -d --name kafka -p 9092:9092 apache/kafka:3.9.0</pre>
+<pre><span class="k">docker</span> run -d --name kafka -p 9092:9092 apache/kafka:4.3.1</pre>
 </div>
 
 <div class="cmd">
@@ -48,6 +48,46 @@
 <pre><span class="k">docker</span> rm -f kafka</pre>
 </div>
 
+<h2>多 broker 集群（副本实验用）</h2>
+
+<div class="cmd">
+  <p class="cmd-title">启动 3 broker 集群</p>
+  <p class="cmd-note">编排文件在工作区 <code>assets/docker-compose.cluster.yml</code>。端口 29092 / 39092 / 49092 分别对应三个 broker 的宿主机入口。</p>
+<pre><span class="k">docker</span> compose -f docker-compose.cluster.yml up -d</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">查看集群状态</p>
+<pre><span class="k">docker</span> compose -f docker-compose.cluster.yml ps</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">模拟 broker 故障 / 恢复</p>
+  <p class="cmd-note">杀掉一个看 ISR 收缩；恢复后等约 30 秒，副本追上 leader 会自动重回 ISR。<strong>这只演示「进程挂」—— 数据仍在容器里。</strong></p>
+<pre><span class="k">docker</span> stop kafka-3
+<span class="k">docker</span> start kafka-2 kafka-3</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">模拟「机器报废」（数据真的没了）</p>
+  <p class="cmd-note"><code>rm</code> 连容器的可写层一起删掉，重建出来的是空机器 —— 靠其余副本全量同步才能回 ISR。编排文件未声明 <code>volumes</code>，故数据随容器消失。</p>
+<pre><span class="k">docker</span> rm -f kafka-3
+<span class="k">docker</span> compose -f docker-compose.cluster.yml up -d kafka-3</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">查看刷盘策略（为什么不靠本机磁盘）</p>
+  <p class="cmd-note">看 <code>log.flush.interval.messages</code> 与 <code>log.flush.interval.ms</code>。值极大或为空，即「几乎不主动刷盘」—— 持久性因此只能靠副本份数。</p>
+<pre><span class="k">docker</span> exec kafka-1 /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server kafka-1:19092 \
+  --entity-type brokers --entity-name 1 --describe --all | <span class="k">grep</span> -i flush</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">关闭集群</p>
+<pre><span class="k">docker</span> compose -f docker-compose.cluster.yml down</pre>
+</div>
+
 <h2>Topic 管理</h2>
 
 <div class="cmd">
@@ -55,6 +95,29 @@
 <pre><span class="k">docker</span> exec kafka /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server localhost:9092 \
   --create --topic &lt;名称&gt; --partitions 3 --replication-factor 1</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">建 topic（生产级:3 副本 + 最小同步副本数）</p>
+  <p class="cmd-note">CDC 这类「不可丢」场景的最小可用配置。三个参数缺一不可:副本数、min.insync.replicas、生产者 acks=all。</p>
+<pre><span class="k">docker</span> exec kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka-1:19092 \
+  --create --topic &lt;名称&gt; --partitions 3 \
+  --replication-factor 3 --config min.insync.replicas=2</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">查看副本分布与 ISR（副本排查第一命令）</p>
+  <p class="cmd-note"><code>Replicas</code> 是静态分配，<code>Isr</code> 是当前跟得上的副本 —— <strong>两者不一致就说明有副本掉队了</strong>。这是排查「消息会不会丢」的起点。</p>
+<pre><span class="k">docker</span> exec kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka-1:19092 --describe --topic &lt;名称&gt;</pre>
+</div>
+
+<div class="cmd">
+  <p class="cmd-title">修改 topic 的 min.insync.replicas</p>
+<pre><span class="k">docker</span> exec kafka-1 /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server kafka-1:19092 --entity-type topics \
+  --entity-name &lt;名称&gt; --alter --add-config min.insync.replicas=2</pre>
 </div>
 
 <div class="cmd">
@@ -155,7 +218,7 @@
 </div>
 
 <div class="footer">
-  <p>Kafka 学习 · 参考文档 · 速查卡 · 相关：<a href="../lessons/0001-kafka-is-a-log.html">第 1 课</a> · <a href="glossary.html">术语表</a></p>
+  <p>Kafka 学习 · 参考文档 · 速查卡 · 相关：<a href="../lessons/0001-kafka-is-a-log.html">第 1 课</a> · <a href="../lessons/0002-where-does-the-offset-live.html">第 2 课</a> · <a href="../lessons/0003-replication-and-isr.html">第 3 课</a> · <a href="../lessons/0004-failure-model.html">第 4 课</a> · <a href="glossary.html">术语表</a></p>
 </div>
 
 </div>
