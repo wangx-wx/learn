@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 课 · 副本与 ISR:消息什么时候算真的写成功了</title>
+<link rel="stylesheet" href="../assets/course.css">
+<link rel="stylesheet" href="../assets/components.css">
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">Kafka 学习 · 第 3 课</p>
+<h1>消息什么时候算真的写成功了</h1>
+<p class="subtitle">「同步发送」只是半个答案 —— 决定你丢不丢数据的，是 acks 和 min.insync.replicas 的<strong>组合</strong></p>
+
+<div class="meta">
+  <span>约 60 分钟</span>
+  <span>需要:3 broker 集群(本课搭建)</span>
+  <span>前置:第 1、2 课</span>
+</div>
+
+<div class="objectives">
+  <h4>本课结束后你能做到</h4>
+  <ul>
+    <li>说清 ISR 是什么、副本什么时候被踢出 ISR、为什么「活着」和「在 ISR 里」是两件事</li>
+    <li>解释 HW(high watermark)为什么是消费者能看到的消息边界</li>
+    <li>用 <code>acks</code> × <code>min.insync.replicas</code> 的组合,判断一组配置到底丢不丢数据</li>
+    <li>亲手搭起 3 broker 集群,杀掉一个 broker,观察 ISR 收缩与写入行为的变化</li>
+  </ul>
+</div>
+
+<h2>一、先说你对上一课三道题的回答</h2>
+
+<p>你的第 3 题答得相当好 —— 你自主推导出了<strong>生产者 / 存储 / 消费</strong>三个环节,这正好是 Kafka 可靠性的完整框架。这个框架是行业公认的划分方式,你等于自己复原了它。</p>
+
+<p>但其中有一句话需要精确化。你写道:</p>
+
+<blockquote style="border-left:3px solid var(--rule);margin:1rem 0;padding:.2rem 0 .2rem 1rem;color:var(--ink-soft)">
+「生产者生产消息的时候,需要保证将消息正常发送到 Kafka 中,<strong>可以同步发送</strong>」
+</blockquote>
+
+<p>「同步发送」是个含糊的说法 —— 同步等谁?等多久?这里其实有两个独立的参数在起作用,而它们的<strong>组合</strong>才决定结果。这正是本课的主题。</p>
+
+<div class="callout key">
+  <span class="callout-label">本课的核心命题</span>
+  <p><code>acks</code> 决定「<strong>等几个副本</strong>」,<code>min.insync.replicas</code> 决定「<strong>低于几个副本就拒收</strong>」。<strong>只看 acks 会得出错误结论</strong> —— 这正是最常见的一个认知陷阱。</p>
+</div>
+
+<h2>二、副本与 ISR:一个动态的集合</h2>
+
+<p>一个分区有多个副本,其中一个是 <strong>leader</strong>,其余是 <strong>follower</strong>。所有的读写都走 leader,follower 的唯一工作是<strong>持续地复制 leader 的日志</strong>。</p>
+
+<p>关键问题是:follower 们不一定都跟得上。有的可能网络卡了,有的可能进程卡了。于是 Kafka 需要区分两种 follower:</p>
+
+<table>
+  <thead>
+    <tr><th>概念</th><th>含义</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>ISR</strong><br><span class="en">in-sync replicas</span></td>
+      <td>「跟得上 leader」的副本集合,<strong>包含 leader 自己</strong>。只有 ISR 里的副本,才有资格在 leader 挂掉后接班</td>
+    </tr>
+    <tr>
+      <td><strong>LEO</strong><br><span class="en">log end offset</span></td>
+      <td>某个副本的日志末端位置 —— 它自己写到哪了</td>
+    </tr>
+    <tr>
+      <td><strong>HW</strong><br><span class="en">high watermark</span></td>
+      <td>ISR 中<strong>最小的 LEO</strong>。这是消费者能看到的消息边界</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>「跟得上」的判定标准是时间,不是位置 —— 由 <code>replica.lag.time.max.ms</code> 控制,<strong>默认 30000(30 秒)</strong>。一个副本如果 30 秒内没能追上 leader 的 LEO,就被踢出 ISR。</p>
+
+<p>动手玩一下。注意两件事:点击 broker 卡片可以让它挂掉或恢复;副本<strong>不会自动追上</strong>,必须点「让副本追上来」—— 这样你才能看见「leader 已写入、副本还没同步」那个危险窗口。</p>
+
+<div class="isr" data-isr-sim>
+  <div class="isr-brokers"></div>
+  <div class="isr-ctl">
+    <label>acks
+      <select data-acks>
+        <option value="0">0</option>
+        <option value="1">1</option>
+        <option value="all">all</option>
+      </select>
+    </label>
+    <label>min.insync.replicas
+      <select data-minisr>
+        <option value="1">1</option>
+        <option value="2">2</option>
+      </select>
+    </label>
+  </div>
+  <div class="isr-bar">
+    <button class="isr-btn" data-act="produce">发送一条消息</button>
+    <button class="isr-btn" data-act="sync">让副本追上来</button>
+    <button class="isr-btn ghost" data-act="reset">重置</button>
+  </div>
+  <p class="isr-stats">
+    leader <b class="isr-leader">-</b> ·
+    ISR <b class="isr-isr">-</b> ·
+    HW <b class="isr-hw">0</b> ·
+    生产者已确认 <b class="isr-acked">0</b> 条
+  </p>
+  <p class="isr-verdict"></p>
+</div>
+
+<p><strong>请务必亲手做这个序列:</strong></p>
+<ol>
+  <li>用 <code>acks=1</code> 发送一条 → 再点「让副本追上来」。注意消息<strong>早就被确认了</strong>,但 HW 才刚推进。</li>
+  <li>重置。把 broker-1 和 broker-2 点挂,只留 broker-0 → 用 <code>acks=all</code>、<code>min.insync.replicas=2</code> 发送。看它<strong>拒绝</strong>。</li>
+  <li>把 <code>min.insync.replicas</code> 改成 1,再发一次 → 这次接受了。同一个集群,同一个 acks,只因为 min.insync.replicas 不同,行为完全相反。</li>
+</ol>
+
+<h2>三、默认配置到底安不安全</h2>
+
+<p>这是本课最反直觉的一段。Kafka 4.3 的默认值是这样的(均来自官方文档):</p>
+
+<table>
+  <thead>
+    <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>acks</code>(生产者)</td><td><strong>all</strong></td><td>等 ISR 全部副本确认</td></tr>
+    <tr><td><code>min.insync.replicas</code>(broker/topic)</td><td><strong>1</strong> ⚠️</td><td>ISR 少于 1 个才拒收 —— 等于不设防</td></tr>
+    <tr><td><code>default.replication.factor</code>(broker)</td><td><strong>1</strong> ⚠️</td><td>新建 topic 默认<strong>没有副本</strong></td></tr>
+    <tr><td><code>enable.idempotence</code>(生产者)</td><td>true</td><td>生产者侧去重,4.x 已默认开启</td></tr>
+    <tr><td><code>unclean.leader.election.enable</code></td><td>false</td><td>不允许非 ISR 副本当 leader(正确)</td></tr>
+  </tbody>
+</table>
+
+<p class="meta" style="border:0;padding:0;margin:-.5rem 0 1rem">来源:<a href="https://kafka.apache.org/43/generated/producer_config.html">生产者配置</a> · <a href="https://kafka.apache.org/43/generated/kafka_config.html">broker 配置</a>(官方生成页,精确实时)</p>
+
+<div class="callout warn">
+  <span class="callout-label">陷阱在这里</span>
+  <p><code>acks=all</code> 看起来很强,但 <code>min.insync.replicas=1</code> 让它可以被架空:ISR 只剩 leader 自己时,<code>acks=all</code> 就退化成 <code>acks=1</code> —— <strong>等一个副本,就是等它自己</strong>。</p>
+  <p>更糟的是 <code>default.replication.factor=1</code>:你新建的 topic 根本<strong>没有副本</strong>。这种情况下,leader 所在的 broker 一挂,数据就没了,任何 acks 都救不了。</p>
+  <p><strong>结论:默认配置给不了你 CDC 需要的持久性保证。必须显式设置。</strong></p>
+</div>
+
+<h3>那 CDC 管道该怎么配?</h3>
+
+<p>按你在使命里定的需求(不可容忍丢失),最小可用组合是:</p>
+
+<pre><span class="c"># 建 topic 时:3 副本</span>
+--replication-factor 3
+
+<span class="c"># topic 级别:要求至少 2 个副本在 ISR 里</span>
+min.insync.replicas=2
+
+<span class="c"># 生产者:等所有 ISR 副本确认</span>
+acks=all</pre>
+
+<p>这三个一起用,才能保证「一条消息被确认时,至少存在于 2 个 broker 上」—— 挂掉任意 1 个都不丢。代价是:当可用副本少于 2 个时,<strong>写入会被拒绝</strong>(牺牲可用性换一致性)。这是你必须意识到的取舍,而不是 bug。</p>
+
+<div class="callout">
+  <span class="callout-label">顺带回答你的第 1 题</span>
+  <p>你说「消费者处理完成消息,会提交消费完成的信号」—— 方向对,但漏了<strong>时机</strong>。第 2 课讲过:提交不是「处理完就自动发生」的,默认是<strong>每 5 秒一次</strong>的定时提交。所以崩溃那一刻,「处理到哪」和「提交到哪」之间几乎总有<strong>一段未被提交的消息</strong> —— 这就是重复消费的窗口。这正是第 2 课那个模拟器演示的东西。</p>
+</div>
+
+<h2>四、检索练习</h2>
+
+<p>前两题考本课,后两题考第 1、2 课 —— <strong>混着考</strong>比只考新内容记得更牢。不要往回翻。</p>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 1 / 4</span>一个 broker 进程活着,但落后 leader 超过 30 秒。它的状态是?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">已从同步副本集合中被移除</button></li>
+    <li><button class="quiz-btn" data-correct="false">仍继续留在同步副本集合中</button></li>
+    <li><button class="quiz-btn" data-correct="false">被立即踢出整个集群的范围</button></li>
+    <li><button class="quiz-btn" data-correct="false">自动升级成为新的领导节点</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">「进程活着」和「在 ISR 里」是两件事。ISR 的判定标准是<strong>时间</strong>(<code>replica.lag.time.max.ms</code>,默认 30 秒),不是存活状态。</p>
+  </div>
+</div>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 2 / 4</span><code>acks=all</code> + <code>min.insync.replicas=1</code>,ISR 只剩 leader 时?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">写入仍会成功但已无冗余</button></li>
+    <li><button class="quiz-btn" data-correct="false">写入被拒绝集群不可用了</button></li>
+    <li><button class="quiz-btn" data-correct="false">自动降级为只等单副本写</button></li>
+    <li><button class="quiz-btn" data-correct="false">等待其他副本恢复后再写</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">ISR 只剩 leader(1 个),不小于 <code>min.insync.replicas=1</code>,所以不拒收。此时 <code>acks=all</code> 退化为<strong>只等 leader 自己</strong> —— 这正是默认配置的陷阱。</p>
+  </div>
+</div>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 3 / 4</span>消费者组崩溃重启后,从哪个位置恢复消费?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">从最近一次已提交的位点</button></li>
+    <li><button class="quiz-btn" data-correct="false">从进程内存中记录的位点</button></li>
+    <li><button class="quiz-btn" data-correct="false">从日志最早的那一条开始</button></li>
+    <li><button class="quiz-btn" data-correct="false">从日志末端的新消息开始</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">第 2 课的内容。内存里的位置随进程消失,broker 里只留着你提交过的 —— 两者之间的消息会被重读,这是 at-least-once 的机制本身。</p>
+  </div>
+</div>
+
+<div class="quiz" data-quiz>
+  <p class="quiz-q"><span class="num">检索 4 / 4</span>offset 编号的命名空间是什么?</p>
+  <ul class="quiz-opts">
+    <li><button class="quiz-btn" data-correct="true">分区,每个分区各自从零编号</button></li>
+    <li><button class="quiz-btn" data-correct="false">主题,整个主题范围统一编号</button></li>
+    <li><button class="quiz-btn" data-correct="false">集群,由控制器统一分配编号</button></li>
+    <li><button class="quiz-btn" data-correct="false">消费者组,每组各自独立编号</button></li>
+  </ul>
+  <div class="quiz-feedback">
+    <span class="verdict"></span>
+    <p class="why">第 1 课的内容,你在那里曾把它说成 topic。分区才是 offset 的命名空间 —— 3 个分区时 <code>offset=0</code> 同时存在三条。</p>
+  </div>
+</div>
+
+<p class="quiz-score no-print" data-scoreboard></p>
+
+<h2>五、动手:搭起 3 broker 集群,杀掉一个看看</h2>
+
+<p>副本实验单节点做不了 —— 必须有多个 broker 才有「副本」可言。本课顺带完成使命里「搭多 broker 集群」这个目标。</p>
+
+<ol class="steps">
+  <li>
+    <p><strong>清理旧容器,避免端口冲突</strong></p>
+<pre><span class="k">docker</span> rm -f kafka</pre>
+    <p>前两课的单节点容器叫 <code>kafka</code>,先删掉。它的数据也会丢,没关系 —— 前两课的结论你已经验证过了。</p>
+  </li>
+
+  <li>
+    <p><strong>启动 3 broker 集群</strong></p>
+<pre><span class="k">docker</span> compose -f docker-compose.cluster.yml up -d</pre>
+    <p>用工作区里准备好的编排文件(<code>kafka/assets/docker-compose.cluster.yml</code>)。<code>-d</code> 表示后台运行。<strong>如果你在 Mac 上,把文件拷到服务器再执行</strong>;或者直接把内容粘贴成一个文件。</p>
+    <p>等约 30 秒,确认三个都起来了:</p>
+<pre><span class="k">docker</span> compose -f docker-compose.cluster.yml ps</pre>
+  </li>
+
+  <li>
+    <p><strong>建一个 3 副本的 topic</strong></p>
+<pre><span class="k">docker</span> exec kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka-1:19092 \
+  --create --topic cdc --partitions 3 \
+  --replication-factor 3 --config min.insync.replicas=2</pre>
+    <p>注意三点:<code>--replication-factor 3</code> 让每个分区有 3 个副本;<code>min.insync.replicas=2</code> 是<strong>显式设置</strong>的(默认只有 1);bootstrap 地址用容器内部名 <code>kafka-1:19092</code>,因为命令是在容器里执行的。</p>
+  </li>
+
+  <li>
+    <p><strong>看副本分布和 ISR</strong></p>
+<pre><span class="k">docker</span> exec kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka-1:19092 --describe --topic cdc</pre>
+    <p>输出里每个分区一行,重点看两列:<code>Replicas</code> 是副本分布在哪些 broker,<code>Isr</code> 是<strong>当前</strong>跟得上的副本。<strong>现在两者应该完全一样</strong> —— 因为一切正常。记住这个基线,下一步它会变。</p>
+  </li>
+
+  <li>
+    <p><strong>写入几条消息</strong></p>
+<pre><span class="k">printf</span> <span class="s">'row-1\nrow-2\nrow-3\n'</span> | <span class="k">docker</span> exec -i kafka-1 \
+  /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server kafka-1:19092 --topic cdc</pre>
+    <p>普通的写入。此刻 3 个副本都有数据。</p>
+  </li>
+
+  <li>
+    <p><strong>杀掉一个 broker —— 关键一步</strong></p>
+<pre><span class="k">docker</span> stop kafka-3</pre>
+    <p>停掉 kafka-3,然后重新执行第 4 步的 <code>--describe</code>。盯住 <code>Isr</code> 那一列。</p>
+    <div class="callout check">
+      <span class="callout-label">你会看到什么</span>
+      <p>凡是副本列表里含 <code>3</code> 的分区,它的 <code>Isr</code> 都<strong>少了一个 3</strong> —— 变成两个。但 <code>Replicas</code> 那列<strong>没变</strong>,仍然是三个。</p>
+      <p>这就是 ISR 的动态性:<strong>副本的分配是静态的,ISR 是动态的</strong>。kafka-3 还在副本名单里,只是暂时没资格。注意要等几秒让 30 秒的判定窗口过去,或者多刷几次。</p>
+    </div>
+  </li>
+
+  <li>
+    <p><strong>再杀一个 —— 观察写入被拒绝</strong></p>
+<pre><span class="k">docker</span> stop kafka-2</pre>
+    <p>现在只剩 kafka-1 活着。含 <code>1</code> 的分区,ISR 只剩 1 个副本 —— 小于 <code>min.insync.replicas=2</code>。再试一次第 5 步的写入:</p>
+<pre><span class="k">printf</span> <span class="s">'should-fail\n'</span> | <span class="k">docker</span> exec -i kafka-1 \
+  /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server kafka-1:19092 --topic cdc</pre>
+    <div class="callout check">
+      <span class="callout-label">你刚刚证明了什么</span>
+      <p>生产者会报错 —— 类似 <code>NOT_ENOUGH_REPLICAS</code> 或 <code>NotEnoughReplicasException</code>。<strong>消息被拒绝了,没有写进去。</strong></p>
+      <p>这不是故障,是<strong>设计意图</strong>:集群宁可让写入失败,也不接受一条无法保证冗余的消息。你的 CDC 管道要的正是这个行为 —— 失败可以被重试,静默丢数据不能。</p>
+    </div>
+  </li>
+
+  <li>
+    <p><strong>把 broker 恢复,看 ISR 自己长回来</strong></p>
+<pre><span class="k">docker</span> start kafka-2 kafka-3</pre>
+    <p>等 30 秒左右,再 <code>--describe</code> 一次。<code>Isr</code> 会重新变回三个 —— 副本追上 leader 后<strong>自动</strong>重回 ISR。再写入一次,应该恢复正常。</p>
+    <p>这一步也说明:broker 恢复后<strong>不是立刻</strong>回到 ISR,要先追上数据。这正是你在模拟器里点「让副本追上来」对应的真实过程。</p>
+  </li>
+</ol>
+
+<div class="predict">
+  <span class="callout-label">先想再看</span>
+  <p>把 topic 的 <code>min.insync.replicas</code> 从 2 改成 1(<code>--alter --add-config min.insync.replicas=1</code>),然后<strong>再杀掉两个 broker</strong>、只留 kafka-1。这次写入会成功还是被拒绝?为什么?</p>
+  <p>再想一层:如果它成功了,这条消息此刻有几份副本?<strong>此时 kafka-1 挂掉,数据还在吗?</strong></p>
+  <textarea placeholder="我的预测是……"></textarea>
+</div>
+
+<h2>六、把这一课压缩成一句话</h2>
+
+<div class="callout key">
+  <span class="callout-label">带走这一句</span>
+  <p><code>acks</code> 决定等几个副本,<code>min.insync.replicas</code> 决定低于几个就拒收 —— <strong>必须成对配置才有意义</strong>。默认值 <code>acks=all</code> + <code>min.insync.replicas=1</code> + <code>default.replication.factor=1</code> 给不了持久性保证,CDC 场景必须显式设为 <code>3</code> / <code>2</code> / <code>all</code>。</p>
+</div>
+
+<p>下次遇到「消息丢了」,按这个顺序查:topic 的 <code>replication-factor</code> 是多少?<code>min.insync.replicas</code> 是多少?生产者的 <code>acks</code> 是什么?三个都要问,只问一个会得出错误结论。</p>
+
+<div class="primary-source">
+  <span class="callout-label">一手资料 · 强烈建议读</span>
+  <p class="src-title">Apache Kafka 官方文档 · Replication(Design 章节)</p>
+  <p>官方对 ISR、HW、leader 选举的权威定义。读 Design 页里 <strong>Replication</strong> 那一节,重点看「为什么用 ISR 而不是多数派投票」—— 这是 Kafka 复制机制与 Raft / Paxos 最本质的区别。</p>
+  <p><a href="https://kafka.apache.org/43/design/design">kafka.apache.org/43/design/design</a>(英文,约 25 分钟)</p>
+  <p>配置默认值随时可查,别凭记忆:<a href="https://kafka.apache.org/43/generated/kafka_config.html">broker 配置(官方)</a>。</p>
+</div>
+
+<div class="lesson-nav">
+  <h4>相关</h4>
+  <ul>
+    <li><a href="0001-kafka-is-a-log.html">第 1 课</a> —— 日志模型</li>
+    <li><a href="0002-where-does-the-offset-live.html">第 2 课</a> —— 位点与提交</li>
+    <li><a href="../reference/glossary.html">术语表</a> —— 本课引入:ISR、HW、LEO、acks、min.insync.replicas</li>
+    <li><a href="../reference/quick-reference.html">速查卡</a> —— 已新增多 broker 集群与副本排查命令</li>
+    <li><a href="../assets/docker-compose.cluster.yml">集群编排文件</a> —— 本课用的 3 broker 配置</li>
+  </ul>
+</div>
+
+<div class="callout warn no-print">
+  <span class="callout-label">我是你的老师,随时提问</span>
+  <p>第 7 步的报错信息可能和预期不同(版本间措辞有差异),把实际输出贴给我。做练习时把你的答案告诉我 —— 包括答错的和拿不准的。</p>
+</div>
+
+<div class="footer">
+  <p>Kafka 学习 · 第 3 课 · <a href="0003-replication-and-isr.html">0003-replication-and-isr</a></p>
+</div>
+
+</div>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/isr-sim.js"></script>
+</body>
+</html>
