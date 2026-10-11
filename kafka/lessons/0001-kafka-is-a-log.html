@@ -190,13 +190,13 @@
 
 <div class="callout">
   <span class="callout-label">关于版本</span>
-  <p>下面用 <code>apache/kafka:3.9.0</code>（官方镜像，KRaft 模式，不需要 ZooKeeper）。如果拉取失败或启动报错，把报错贴给我，我帮你换成 docker compose 的写法 —— 那条路更啰嗦但更可控。</p>
+  <p>下面用 <code>apache/kafka:4.3.1</code>（官方镜像，KRaft 模式，不需要 ZooKeeper）。如果拉取失败或启动报错，把报错贴给我，我帮你换成 docker compose 的写法 —— 那条路更啰嗦但更可控。</p>
 </div>
 
 <ol class="steps">
   <li>
     <p><strong>启动一个单节点 broker</strong></p>
-<pre><span class="k">docker</span> run -d --name kafka -p 9092:9092 apache/kafka:3.9.0</pre>
+<pre><span class="k">docker</span> run -d --name kafka -p 9092:9092 apache/kafka:4.3.1</pre>
     <p>等大约 15 秒，然后确认它真的起来了：</p>
 <pre><span class="k">docker</span> logs kafka | tail -5</pre>
     <p>看到 <code>Kafka Server started</code> 或类似字样就说明可以了。</p>
@@ -270,7 +270,7 @@
   <span class="callout-label">一手资料 · 强烈建议读</span>
   <p class="src-title">《The Log: What every software engineer should know about real-time data's unifying abstraction》</p>
   <p>作者 Jay Kreps 是 Kafka 的联合创始人。这篇长文不是讲 Kafka 怎么用，而是讲「日志」这个抽象为什么是分布式系统的中心结构 —— 它正是本课那个重新分类的原始出处，也是理解 Kafka 设计动机最权威的一手材料。</p>
-  <p><a href="https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying">engineering.linkedin.com · 原文</a>（英文，约 40 分钟）</p>
+  <p><a href="https://www.linkedin.com/blog/engineering/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying">linkedin.com/blog · 原文</a>（英文，约 40 分钟）</p>
   <p>读的时候不必求全。重点读前三分之一「日志是什么」的部分，后面关于流处理和数据库的部分可以留到以后。有看不懂的地方直接来问我。</p>
 </div>
 
@@ -279,6 +279,7 @@
   <ul>
     <li><a href="../reference/glossary.html">术语表</a> —— 本课引入：日志、offset、分区、at-least-once</li>
     <li><a href="../reference/quick-reference.html">速查卡</a> —— 本课用到的 Docker 与 CLI 命令</li>
+    <li><a href="0002-where-does-the-offset-live.html">第 2 课</a> —— 位点到底存在哪</li>
     <li><a href="../MISSION.md">学习使命</a> —— 为什么要学这些</li>
   </ul>
 </div>
